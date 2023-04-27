@@ -70,22 +70,7 @@ class EncFS(Operations):
         self.password = getpass.getpass(prompt="Enter password: ")
         log.info('init password: %s', self.password)
         self.password = bytes(self.password, 'utf-8')
-        
-    def encrypt_file(self, file_path, plain_text: bytes):
-        salt = os.urandom(16)
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=480000,
-        )
-        key = base64.urlsafe_b64encode(kdf.derive(self.password))
-        f = Fernet(key)
-        encrypted_data = f.encrypt(plain_text)
-        with open(file_path, 'wb') as file:
-            file.write(salt)
-            file.write(encrypted_data)
-        
+           
     def destroy(self, path):
         """Clean up any resources used by the filesystem.
         
@@ -155,18 +140,20 @@ class EncFS(Operations):
 
     @logged
     def getattr(self, path, fh=None):
-        """Return file or directory attributes.
+        """Return file or directory attributes."""
+        # ignore .git , .gitignore, etc.
+        if path.startswith('.'):
+            return None
 
-        The "stat" structure is described in detail in the stat(2) manual page.
-        For the given pathname, this should fill in the elements of the "stat"
-        structure. If a field is meaningless or semi-meaningless (e.g., st_ino)
-        then it should be set to 0 or given a "reasonable" value. This call is
-        pretty much required for a usable filesystem.
-
-        """
         log.info("getattr path : %s", path)
         full_path = self._full_path(path)
-        log.info("getattr full_path : %s", full_path)
+
+        if not os.path.exists(full_path):
+            # create the file if it doesn't exist
+            with open(full_path, 'wb') as f:
+                log.info("getattr create the file if it does not exist: %s", full_path)
+                pass
+
         st = os.lstat(full_path)
         log.info("getattr st : %s", st)
 
@@ -324,7 +311,13 @@ class EncFS(Operations):
     def decrypt_file(self, file_path):
         with open(file_path, 'rb') as file:
             salt = file.read(16)
-            encrypted_data = file.read()  # Move this line inside the with block
+            if not salt:
+                # Return an empty byte array if file is empty or too small to contain salt
+                return b'' 
+            encrypted_data = file.read()
+            if not encrypted_data:
+                raise ValueError("File is empty or too small to contain encrypted data")
+        
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -366,6 +359,7 @@ class EncFS(Operations):
         # Increment the file descriptor and return it
         fd = self.fd
         self.fd += 1
+        log.info('open current fd: %s', self.fd)
         return fd
         
     @logged
@@ -381,21 +375,37 @@ class EncFS(Operations):
         Read should return an array-like type with the appropriate data. Write should return the number of bytes written (which should be the number of bytes requested to be written)
 
         """
-        path = self._full_path(path)
+        full_path = self._full_path(path)
         # Retrieve the file content from the in-memory dictionary
-        file_content = self.openFiles.get(path, None)
+        file_content = self.openFiles.get(full_path, None)
         if not file_content:
-            raise FileNotFoundError(f"No such file or directory: '{path}'")
-        return self.decrypt_file(path)
+            raise FileNotFoundError(
+                f"No such file or directory: '{full_path}'")
+        return self.decrypt_file(full_path)
 
     @logged
-    def write(self, path, buf: bytes, offset, fh):
+    def write(self, path, buf, offset, fh):
         """Write to a file.
 
         """
-        path = self._full_path(path)
-        encrypted_file = self.encrypt_file(path, buf)
-        return 'FILL ME IN'
+        log.info('write buf: %s', buf)
+        log.info('write buf type: %s', type(buf))
+        full_path = self._full_path(path)
+
+        salt = os.urandom(16)
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=480000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(self.password))
+        f = Fernet(key)
+        encrypted_data = f.encrypt(buf)
+        with open(full_path, 'wb') as file:
+            file.write(salt)
+            file.write(encrypted_data)
+        return len(buf)
 
     @logged
     def truncate(self, path, length, fh=None):
@@ -406,7 +416,10 @@ class EncFS(Operations):
         filesystems, because recreating a file will first truncate it.
 
         """
-        return 'FILL ME IN!!!'
+        full_path = self._full_path(path)
+        with open(full_path, 'r+') as f:
+            return f.truncate(length)
+        
 
     #skip
     '''
@@ -435,8 +448,12 @@ class EncFS(Operations):
         that is true.
 
         """
+        full_path = self._full_path(path)
 
-        return 'FILL ME IN'
+        if(full_path in self.openFiles):
+            # delete the record whose key is full_path
+            del self.openFiles[full_path]
+        return os.close(fh)
     
     #skip
 '''    @logged
