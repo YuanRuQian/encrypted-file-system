@@ -16,6 +16,7 @@ from __future__ import with_statement
 
 from functools import wraps
 import os
+import stat
 import sys
 import errno
 import logging
@@ -29,6 +30,8 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+import getpass
+
 
 log = logging.getLogger(__name__)
 
@@ -57,9 +60,31 @@ class EncFS(Operations):
     """
     def __init__(self, root):
         self.root = root
+
+        # Create an empty dictionary to store in-memory files
         self.openFiles = {}
-        self.nextFD = 0
-        #TODO, FINISH ME!!
+        self.fd = 0
+        self.key = Fernet.generate_key()
+
+        # Read in the user's password and store it
+        self.password = getpass.getpass(prompt="Enter password: ")
+        log.info('init password: %s', self.password)
+        self.password = bytes(self.password, 'utf-8')
+        
+    def encrypt_file(self, file_path, plain_text: bytes):
+        salt = os.urandom(16)
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=480000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(self.password))
+        f = Fernet(key)
+        encrypted_data = f.encrypt(plain_text)
+        with open(file_path, 'wb') as file:
+            file.write(salt)
+            file.write(encrypted_data)
         
     def destroy(self, path):
         """Clean up any resources used by the filesystem.
@@ -130,7 +155,7 @@ class EncFS(Operations):
 
     @logged
     def getattr(self, path, fh=None):
-        """Return file attributes.
+        """Return file or directory attributes.
 
         The "stat" structure is described in detail in the stat(2) manual page.
         For the given pathname, this should fill in the elements of the "stat"
@@ -139,13 +164,24 @@ class EncFS(Operations):
         pretty much required for a usable filesystem.
 
         """
+        log.info("getattr path : %s", path)
         full_path = self._full_path(path)
+        log.info("getattr full_path : %s", full_path)
         st = os.lstat(full_path)
-        print("FIXME FIXME: update so that the size reported here is the length of the decrypted data, not the physical file size!")
-        props = dict((key, getattr(st, key)) for key in ('st_atime', 'st_ctime',
-               'st_gid', 'st_mode', 'st_mtime', 'st_nlink', 'st_size', 'st_uid'))
+        log.info("getattr st : %s", st)
 
-        '''TODO FINISH ME TO UPDATE THE st_size fiel to the size of the unencrypted content'''
+        if os.path.isdir(full_path):
+            props = dict((key, getattr(st, key)) for key in ('st_atime', 'st_ctime',
+                                                         'st_gid', 'st_mode', 'st_mtime', 'st_nlink', 'st_size', 'st_uid'))
+            props['st_mode'] |= stat.S_IFDIR
+        else:
+            decrypted_data = self.decrypt_file(full_path)
+            props = dict((key, getattr(st, key)) for key in ('st_atime', 'st_ctime',
+                                                         'st_gid', 'st_mode', 'st_mtime', 'st_nlink', 'st_size', 'st_uid'))
+            props['st_size'] = len(decrypted_data)
+            log.info("st_size after decryption: %s", props['st_size'])
+            '''TODO FINISH ME TO UPDATE THE st_size field to the size of the unencrypted content'''
+
         return props
 
     @logged
@@ -283,20 +319,54 @@ class EncFS(Operations):
     def utimens(self, path, times=None):
         return os.utime(self._full_path(path), times)
 
+
+    @logged
+    def decrypt_file(self, file_path):
+        with open(file_path, 'rb') as file:
+            salt = file.read(16)
+            encrypted_data = file.read()  # Move this line inside the with block
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=480000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(self.password))
+        f = Fernet(key)
+        decrypted_data = f.decrypt(encrypted_data)
+        return decrypted_data
+
+
     @logged
     def open(self, path, flags):
         """Open a file.
 
-        Open a file. If you aren't using file handles, this function should
-        just check for existence and permissions and return either success or
-        an error code. If you use file handles, you should also allocate any
-        necessary structures and set fi->fh. In addition, fi has some other
-        fields that an advanced filesystem might find useful; see the structure
-        definition in fuse_common.h for very brief commentary.
+        We're going to ignore the flags the user provides, basically opening everything in rw mode...
 
+        If the file doesn't exist, or it's already open, return -1 (an error)
+
+        Otherwise, read it, and store the decrypted version in your in-memory dictionary. 
+    
         """
+        path = self._full_path(path)
+        log.info('open path: %s', path)
 
-        return "FILL ME IN"
+        #  If the file doesn't exist, or it's already open, return -1
+        if (not os.path.exists(path)) or (path in self.openFiles):
+            return -errno.EEXIST
+
+        decrypted_data = self.decrypt_file(path)
+        log.info('open decrypted_data: %s', decrypted_data)
+
+
+        # Store the decrypted data in the in-memory dictionary
+        self.openFiles[path] = decrypted_data
+        
+
+        # Increment the file descriptor and return it
+        fd = self.fd
+        self.fd += 1
+        return fd
         
     @logged
     def create(self, path, mode, fi=None):
@@ -306,19 +376,25 @@ class EncFS(Operations):
     def read(self, path, length, offset, fh):
         """Read from a file.
 
-        Read size bytes from the given file into the buffer buf, beginning
-        offset bytes into the file. See read(2) for full details. Returns the
-        number of bytes transferred, or 0 if offset was at or beyond the end of
-        the file. Required for any sensible filesystem.
+        These should manipulate the entry in the in-memory dictionary. read/write take the offset and length, so they're easy to use with your in-memory array! Python's slice operations for array-like types should make this pretty easy to do! https://stackoverflow.com/questions/509211/understanding-pythons-slice-notation
+
+        Read should return an array-like type with the appropriate data. Write should return the number of bytes written (which should be the number of bytes requested to be written)
 
         """
-        return "FILL ME IN!!!"
+        path = self._full_path(path)
+        # Retrieve the file content from the in-memory dictionary
+        file_content = self.openFiles.get(path, None)
+        if not file_content:
+            raise FileNotFoundError(f"No such file or directory: '{path}'")
+        return self.decrypt_file(path)
 
     @logged
-    def write(self, path, buf, offset, fh):
+    def write(self, path, buf: bytes, offset, fh):
         """Write to a file.
 
         """
+        path = self._full_path(path)
+        encrypted_file = self.encrypt_file(path, buf)
         return 'FILL ME IN'
 
     @logged
