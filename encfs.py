@@ -71,6 +71,7 @@ class EncFS(Operations):
         log.info('init password: %s', self.password)
         self.password = bytes(self.password, 'utf-8')
            
+    @logged
     def destroy(self, path):
         """Clean up any resources used by the filesystem.
         
@@ -142,7 +143,8 @@ class EncFS(Operations):
     def getattr(self, path, fh=None):
         """Return file or directory attributes."""
         # ignore .git , .gitignore, etc.
-        if path.startswith('.'):
+
+        if path.startswith('/.'):
             return None
 
         log.info("getattr path : %s", path)
@@ -150,9 +152,7 @@ class EncFS(Operations):
 
         if not os.path.exists(full_path):
             # create the file if it doesn't exist
-            with open(full_path, 'wb') as f:
-                log.info("getattr create the file if it does not exist: %s", full_path)
-                pass
+            self.create(path, 0o666)
 
         st = os.lstat(full_path)
         log.info("getattr st : %s", st)
@@ -366,7 +366,7 @@ class EncFS(Operations):
     def create(self, path, mode, fi=None):
         full_path = self._full_path(path)
         log.info('create path: %s', full_path)
-        return "FILL ME IN!"
+        return os.open(full_path, os.O_WRONLY | os.O_CREAT, mode)
 
     @logged
     def read(self, path, length, offset, fh):
