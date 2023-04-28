@@ -1,12 +1,24 @@
 # Encrypted Filesystem
 
-## Important notice
+The purpose of the project is to implement an encrypted filesystem using the [fusepy library](https://github.com/fusepy/fusepy), which allows users to write filesystems with encryption completely in user space. 
+
+## Important Notice
 
 > This code was developed and tested on a machine running Ubuntu 22.04 LTS Jammy Jellyfish, so it may not work seamlessly on other operating systems such as OS X.
 
+## Setup
+
+To install all the required packages for this program, run the following command in your terminal:
+
+```shell
+ pip install -r requirements.txt
+```
+
+This will install all the packages listed in the [requirements.txt](requirements.txt) file.
+
 ## Test
 
-```python
+```shell
 # run the program
 python3 encfs.py encrypted mountpoint 
 
