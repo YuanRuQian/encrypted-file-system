@@ -47,11 +47,22 @@ cat mountpoint/lydia
 
 # it should show “hello from Lydia”
 
+# attempt to read twice from the same file
+cat mountpoint/lydia
 
-# attempt to read from a file that doesn't exist in the physical folder
-cat encrypted/test
+# it should show “hello from Lydia” again
 
-# attempt to read from a file that doesn't exist in virtual filesystem folder
-cat mountpoint/test
+
+# test cat a file does not exist in the physical folder
+
+cat encrypted/testingFile
+
+# console output: cat: encrypted/testingFile: No such file or directory
+
+# test cat a file does not exist in the virtual filesystem folder
+
+cat mountpoint/testingFile
+
+# cat: mountpoint/testingFile: Numerical result out of range
 
 ```

@@ -25,14 +25,11 @@ from fuse import FUSE, FuseOSError, Operations
 
 import base64
 from cryptography.fernet import Fernet
-from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import getpass
 
-
 log = logging.getLogger(__name__)
-
 
 def logged(f):
     @wraps(f)
@@ -40,7 +37,6 @@ def logged(f):
         log.info('%s(%s)', f.__name__, ','.join([str(item) for item in args[1:]]))
         return f(*args, **kwargs)
     return wrapped
-
 
 
 class EncFS(Operations):
@@ -304,9 +300,22 @@ class EncFS(Operations):
     def utimens(self, path, times=None):
         return os.utime(self._full_path(path), times)
 
+    @logged
+    def decrypt_content(self, file_content: bytes):
+        salt = file_content[:self.saltSize]
+        if len(file_content) < self.saltSize:
+            raise FileNotFoundError(
+                f"No such file or directory")
+        encrypted_data = file_content[self.saltSize:]
+        if not encrypted_data:
+            raise ValueError(
+                "File is empty or too small to contain encrypted data")
+        f = self.get_fernet_object_with_salt(salt)
+        decrypted_data = f.decrypt(encrypted_data)
+        return decrypted_data
 
     @logged
-    def decrypt_file(self, file_path):
+    def decrypt_file(self, file_path: str):
         with open(file_path, 'rb') as file:
             salt = file.read(self.saltSize)
             if not salt:
@@ -370,11 +379,11 @@ class EncFS(Operations):
         """
         full_path = self._full_path(path)
         # Retrieve the file content from the in-memory dictionary
-        file_content = self.openFiles.get(full_path, None)
-        if not file_content:
+        if (not full_path in self.openFiles):
             raise FileNotFoundError(
                 f"No such file or directory: '{full_path}'")
-        return self.decrypt_file(full_path)
+        decrypted_content = self.decrypt_content(self.openFiles[full_path])
+        return decrypted_content
     
     @logged
     def get_fernet_object_with_salt(self, salt: bytes):
@@ -393,8 +402,6 @@ class EncFS(Operations):
         """Write to a file.
 
         """
-        log.info('write buf: %s', buf)
-        log.info('write buf type: %s', type(buf))
         full_path = self._full_path(path)
 
         salt = os.urandom(self.saltSize)
