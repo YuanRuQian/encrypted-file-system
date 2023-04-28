@@ -135,14 +135,14 @@ class EncFS(Operations):
         # ignore .git , .gitignore, etc.
 
         if path.startswith('/.'):
+            # ENOENT error indicates the file or directory does not exist
             return None
 
         log.info("getattr path : %s", path)
         full_path = self._full_path(path)
 
         if not os.path.exists(full_path):
-            # create the file if it doesn't exist
-            self.create(path, 0o666)
+            raise FuseOSError(errno.ENOENT)
 
         st = os.lstat(full_path)
         log.info("getattr st : %s", st)
@@ -308,11 +308,9 @@ class EncFS(Operations):
         decrypted_data = self.decrypt_file(path)
         log.info('open decrypted_data: %s', decrypted_data)
 
-
         # Store the decrypted data in the in-memory dictionary
         self.openFiles[path] = decrypted_data
         
-
         # Increment the file descriptor and return it
         fd = self.fd
         self.fd += 1
@@ -339,8 +337,7 @@ class EncFS(Operations):
         if (not full_path in self.openFiles):
             raise FileNotFoundError(
                 f"No such file or directory: '{full_path}'")
-        decrypted_content = self.decrypt_content(self.openFiles[full_path])
-        return decrypted_content
+        return self.openFiles[full_path]
     
     @logged
     def get_fernet_object_with_salt(self, salt: bytes):
@@ -353,34 +350,45 @@ class EncFS(Operations):
         key = base64.urlsafe_b64encode(kdf.derive(self.password))
         return Fernet(key)
 
-
     @logged
     def write(self, path, buf, offset, fh):
-        """Write to a file.
-
-        """
         full_path = self._full_path(path)
 
-        salt = os.urandom(self.saltSize)
-        f = self.get_fernet_object_with_salt(salt)
-        encrypted_data = f.encrypt(buf)
-        with open(full_path, 'wb') as file:
-            file.write(salt)
-            file.write(encrypted_data)
-        return len(buf)
+        if not os.path.exists(full_path):
+            # create the file if it doesn't exist
+            self.create(path, 0o666)
+
+        if full_path not in self.openFiles:
+            self.openFiles[full_path] = b''
+
+        # append current buf to self.openFiles[full_path]
+        self.openFiles[full_path] = self.openFiles[full_path][:offset] + buf
+
+        # truncate / resize the current self.openFiles[full_path] with self.runcate(path, length)
+        length = len(self.openFiles[full_path])
+        self.truncate(path, length)
+
+        # return the resized length of self.openFiles[full_path]
+        return length
 
     @logged
     def truncate(self, path, length, fh=None):
-        """Truncate a file.
-
-        Truncate or extend the given file so that it is precisely size bytes
-        long. See truncate(2) for details. This call is required for read/write
-        filesystems, because recreating a file will first truncate it.
-
-        """
+        """Truncate a file to a specified length."""
         full_path = self._full_path(path)
-        with open(full_path, 'r+') as f:
-            return f.truncate(length)
+
+        if full_path not in self.openFiles:
+            log.error('truncate if full_path not in self.openFiles')
+            # ftruncate(2) : On error, -1 is returned, and errno is set appropriately.
+            return -1
+
+        buf = self.openFiles.get(full_path, b'')
+        buf = buf[:length] if len(buf) > length else buf.ljust(length, b'\0')
+
+        self.openFiles[full_path] = buf
+
+        # ftruncate(2) return 0: success
+        return 0
+
         
     @logged
     def release(self, path, fh):
@@ -395,10 +403,18 @@ class EncFS(Operations):
 
         """
         full_path = self._full_path(path)
-
+        log.info('release full_path: %s', full_path)
         if(full_path in self.openFiles):
-            # delete the record whose key is full_path
-            del self.openFiles[full_path]
+            # rewrite the encrypted file
+            salt = os.urandom(self.saltSize)
+            f = self.get_fernet_object_with_salt(salt)
+            plain_text = self.openFiles[full_path]
+            encrypted_data = f.encrypt(plain_text)
+            with open(full_path, 'wb') as file:
+                file.write(salt)
+                file.write(encrypted_data)
+                # delete the record whose key is full_path
+                del self.openFiles[full_path]
         return os.close(fh)
     
 if __name__ == '__main__':

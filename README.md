@@ -19,6 +19,9 @@ This will install all the packages listed in the [requirements.txt](requirements
 ## Test
 
 ```shell
+#make folders for the physical + encrypted FSs
+mkdir encrypted mountpoint 
+
 # run the program
 python3 encfs.py encrypted mountpoint 
 
@@ -63,6 +66,12 @@ cat encrypted/testingFile
 
 cat mountpoint/testingFile
 
-# cat: mountpoint/testingFile: Numerical result out of range
+# cat: mountpoint/testingFile: No such file or directory
 
 ```
+
+Any files placed in the `encrypted` folder should be automatically encrypted, and no files should ever exist in the `mountpoint` folder at any time.
+
+
+
+
