@@ -364,6 +364,8 @@ class EncFS(Operations):
         
     @logged
     def create(self, path, mode, fi=None):
+        full_path = self._full_path(path)
+        log.info('create path: %s', full_path)
         return "FILL ME IN!"
 
     @logged
