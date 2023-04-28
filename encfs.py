@@ -58,6 +58,7 @@ class EncFS(Operations):
     """
     def __init__(self, root):
         self.root = root
+        self.saltSize = 16
 
         # Create an empty dictionary to store in-memory files
         self.openFiles = {}
@@ -163,10 +164,9 @@ class EncFS(Operations):
             decrypted_data = self.decrypt_file(full_path)
             props = dict((key, getattr(st, key)) for key in ('st_atime', 'st_ctime',
                                                          'st_gid', 'st_mode', 'st_mtime', 'st_nlink', 'st_size', 'st_uid'))
+            # update the st_size to be the length of the decrypted data
             props['st_size'] = len(decrypted_data)
             log.info("st_size after decryption: %s", props['st_size'])
-            '''TODO FINISH ME TO UPDATE THE st_size field to the size of the unencrypted content'''
-
         return props
 
     @logged
@@ -308,7 +308,7 @@ class EncFS(Operations):
     @logged
     def decrypt_file(self, file_path):
         with open(file_path, 'rb') as file:
-            salt = file.read(16)
+            salt = file.read(self.saltSize)
             if not salt:
                 # Return an empty byte array if file is empty or too small to contain salt
                 return b'' 
@@ -316,14 +316,7 @@ class EncFS(Operations):
             if not encrypted_data:
                 raise ValueError("File is empty or too small to contain encrypted data")
         
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=480000,
-        )
-        key = base64.urlsafe_b64encode(kdf.derive(self.password))
-        f = Fernet(key)
+        f = self.get_fernet_object_with_salt(salt)
         decrypted_data = f.decrypt(encrypted_data)
         return decrypted_data
 
@@ -382,6 +375,18 @@ class EncFS(Operations):
             raise FileNotFoundError(
                 f"No such file or directory: '{full_path}'")
         return self.decrypt_file(full_path)
+    
+    @logged
+    def get_fernet_object_with_salt(self, salt: bytes):
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=480000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(self.password))
+        return Fernet(key)
+
 
     @logged
     def write(self, path, buf, offset, fh):
@@ -392,15 +397,8 @@ class EncFS(Operations):
         log.info('write buf type: %s', type(buf))
         full_path = self._full_path(path)
 
-        salt = os.urandom(16)
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=480000,
-        )
-        key = base64.urlsafe_b64encode(kdf.derive(self.password))
-        f = Fernet(key)
+        salt = os.urandom(self.saltSize)
+        f = self.get_fernet_object_with_salt(salt)
         encrypted_data = f.encrypt(buf)
         with open(full_path, 'wb') as file:
             file.write(salt)
