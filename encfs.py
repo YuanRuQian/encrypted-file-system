@@ -5,11 +5,6 @@ WHo provided a naive passthrough FUSE filesystem.
 You'll need to modify the constructor (__init__), open(), create(), 
 read(), write(), truncate(), and release() methods.  See the assignment description for
 what to do
-
-Note, the documentation present here is documentation for the C FUSE API, and
-may not correspond 1-to-1 with the Python FUSE API. It is included for
-informational purposes only to highlight the intended purpose of each method.
-
 """
 
 from __future__ import with_statement
@@ -204,18 +199,6 @@ class EncFS(Operations):
         else:
             return pathname
 
-        #don't allow mknod
-    '''@logged
-    def mknod(self, path, mode, dev):
-        """Make a special file.
-
-        Make a special (device) file, FIFO, or socket. See mknod(2) for
-        details. This function is rarely needed, since it's uncommon to make
-        these objects inside special-purpose filesystems.
-
-        """
-        return os.mknod(self._full_path(path), mode, dev)
-'''
     @logged
     def rmdir(self, path):
         """Remove a directory.
@@ -257,20 +240,7 @@ class EncFS(Operations):
         """
         return os.unlink(self._full_path(path))
 
-    #no symlinks
-    '''    @logged
-    def symlink(self, target, name):
-        """Create a symbolic link.
 
-        Create a symbolic link named "from" which, when evaluated, will lead to
-        "to". Not required if you don't support symbolic links. NOTE:
-        Symbolic-link support requires only readlink and symlink. FUSE itself
-        will take care of tracking symbolic links in paths, so your
-        path-evaluation code doesn't need to worry about it.
-
-        """
-        return os.symlink(self._full_path(target), self._full_path(name))
-    '''
     @logged
     def rename(self, old, new):
         """Rename a file.
@@ -282,20 +252,7 @@ class EncFS(Operations):
 
         """
         return os.rename(self._full_path(old), self._full_path(new))
-#no hard links either
-    '''
-    @logged
-    def link(self, target, name):
-        """Create a hard link.
 
-        Create a hard link between "from" and "to". Hard links aren't required
-        for a working filesystem, and many successful filesystems don't support
-        them. If you do implement hard links, be aware that they have an effect
-        on how unlink works. See link(2) for details.
-
-        """
-        return os.link(self._full_path(target), self._full_path(name))
-'''
     @logged
     def utimens(self, path, times=None):
         return os.utime(self._full_path(path), times)
@@ -425,22 +382,6 @@ class EncFS(Operations):
         with open(full_path, 'r+') as f:
             return f.truncate(length)
         
-
-    #skip
-    '''
-    @logged
-    def flush(self, path, fh):
-        """Flush buffered information.
-
-        Called on each close so that the filesystem has a chance to report
-        delayed errors. Important: there may be more than one flush call for
-        each open. Note: There is no guarantee that flush will ever be called
-        at all!
-
-        """
-        return os.fsync(fh)
-   '''                                            
-
     @logged
     def release(self, path, fh):
         """Release is called when FUSE is done with a file.
@@ -460,23 +401,6 @@ class EncFS(Operations):
             del self.openFiles[full_path]
         return os.close(fh)
     
-    #skip
-'''    @logged
-    def fsync(self, path, fdatasync, fh):
-        """Flush any dirty information to disk.
-
-        Flush any dirty information about the file to disk. If isdatasync is
-        nonzero, only data, not metadata, needs to be flushed. When this call
-        returns, all file data should be on stable storage. Many filesystems
-        leave this call unimplemented, although technically that's a Bad Thing
-        since it risks losing data. If you store your filesystem inside a plain
-        file on another filesystem, you can implement this by calling fsync(2)
-        on that file, which will flush too much data (slowing performance) but
-        achieve the desired guarantee.
-
-        """
-        return self.flush(path, fh)
-'''
 if __name__ == '__main__':
     from sys import argv
     if len(argv) != 3:
