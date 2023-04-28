@@ -258,20 +258,6 @@ class EncFS(Operations):
         return os.utime(self._full_path(path), times)
 
     @logged
-    def decrypt_content(self, file_content: bytes):
-        salt = file_content[:self.saltSize]
-        if len(file_content) < self.saltSize:
-            raise FileNotFoundError(
-                f"No such file or directory")
-        encrypted_data = file_content[self.saltSize:]
-        if not encrypted_data:
-            raise ValueError(
-                "File is empty or too small to contain encrypted data")
-        f = self.get_fernet_object_with_salt(salt)
-        decrypted_data = f.decrypt(encrypted_data)
-        return decrypted_data
-
-    @logged
     def decrypt_file(self, file_path: str):
         with open(file_path, 'rb') as file:
             salt = file.read(self.saltSize)
