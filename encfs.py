@@ -17,12 +17,10 @@ from __future__ import with_statement
 from functools import wraps
 import os
 import stat
-import sys
 import errno
 import logging
 
 from fuse import FUSE, FuseOSError, Operations
-import inspect
 
 
 import base64
